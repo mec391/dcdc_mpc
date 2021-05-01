@@ -15,15 +15,15 @@
 % X = linsolve(A,B)
 
 
-syms IL1  Vo Vcpv 
-syms L1  Rpv R Co Cpv Vpv U
-EQ1 = Vcpv/(2*L1)*U -Vo/(2*L1) + Vcpv/(2*L1) + Vo/(2*L1)*U == 0;
+syms IL1  Vo Vcpv IL2
+syms L1  Rpv R Co Cpv Vpv U L2
+EQ1 = Vcpv/(2*L1)*U -Vo/(2*L1) + Vcpv/(2*L1) + Vo/(2*L1)*U == 1;
 
-% EQ2 = Vcpv/(2*L2)*U -Vo/(2*L2) + Vcpv/(2*L2) + Vo/(2*L2)*U == 0;
+ %EQ2 = Vcpv/(2*L2)*U -Vo/(2*L2) + Vcpv/(2*L2) + Vo/(2*L2)*U == 0.1;
 
-EQ3 = IL1/Co - Vo/(R*Co) - IL1/(Co)*U == 0;
+EQ3 = IL2/Co - Vo/(R*Co) - IL2/(Co)*U == 3;
 
-EQ4 = -IL1/Cpv*U + Vpv/(Rpv*Cpv) - Vcpv/(Rpv*Cpv) - IL1/(Cpv) == 0;
+EQ4 = -IL2/Cpv*U + Vpv/(Rpv*Cpv) - Vcpv/(Rpv*Cpv) - IL1/(Cpv) == 2;
 
 
 [A,B] = equationsToMatrix([EQ1, EQ3, EQ4], [IL1, Vo, Vcpv])
