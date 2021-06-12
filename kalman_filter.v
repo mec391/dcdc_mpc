@@ -1,10 +1,11 @@
-//notes: need 64 bit receiving value when multiplying???
+//notes: 32' * 32' = 64'; Q16 causes 64' >> 16 = 48'; 48' + 48' = 49'; 49' + 48' = 50'; 50' + 48' = 51'?
+//need to go through testbench and make sure all results are properly displaying to make sure the error in the result is a resolution problem and not a truncate or math problem
 `timescale 1ns/1ns
 module kalman_filter_TB();
 reg i_clk;
 reg i_rst_n;
-reg signed [47:0] i_u;
-reg signed [47:0] i_y;
+reg signed [31:0] i_u;
+reg signed [31:0] i_y;
 reg i_begin;
 
 wire signed [31:0] o_state0;
@@ -14,6 +15,16 @@ wire signed [31:0] o_state3;
 wire o_DV;
 
 wire [5:0] debug_SM = UUT.r_SM;
+wire signed [50:0] r_X0 = UUT.r_X[0];
+wire signed [50:0] r_X1 = UUT.r_X[1];
+wire signed [50:0] r_X2 = UUT.r_X[2];
+wire signed [50:0] r_X3 = UUT.r_X[3];
+
+wire signed [50:0] mult_out0 = UUT.mult_out[1][0];
+wire signed [50:0] mult_out1 = UUT.mult_out[1][1];
+wire signed [50:0] mult_out2 = UUT.mult_out[1][2];
+wire signed [50:0] mult_out3 = UUT.mult_out[1][3];
+
 
 kalman_filter UUT(
 .i_clk (i_clk),
@@ -56,8 +67,8 @@ module kalman_filter(
 input i_clk,
 input i_rst_n,
 
-input signed [47:0] i_u,
-input signed [47:0] i_y,
+input signed [31:0] i_u,
+input signed [31:0] i_y,
 input i_begin, //goes HI based on sampling rate
 
 output reg signed [31:0] o_state0, //VCpv
@@ -67,18 +78,18 @@ output reg signed [31:0] o_state3, //VCout
 output reg o_DV
 	);
 
-reg signed [47:0] r_A [0:3][0:3]; //A matrix
-reg signed [47:0] r_AT[0:3][0:3]; //AT matrix
-reg signed [47:0] r_B [0:3]; //B matrix
-reg signed [47:0] r_X [0:3]; //X - state variables
-reg signed [47:0] r_P [0:3][0:3]; //P - Estimate Covariance Matrix 
-reg signed [47:0] r_Q [0:3][0:3]; // Q - Process Noise Matrix
-reg signed [47:0] r_C [0:3]; //C matrix
-reg [47:0] r_C_hold [0:3]; //C hold matrix (for multiplication)
-reg signed [47:0] y_update; //measurement residual
-reg signed [47:0] r_S; //innovation covariance
-reg signed [47:0] r_R; //observation noise covariance
-reg signed [47:0] r_K[0:3]; //kalman gain
+reg signed [31:0] r_A [0:3][0:3]; //A matrix
+reg signed [31:0] r_AT[0:3][0:3]; //AT matrix
+reg signed [31:0] r_B [0:3]; //B matrix
+reg signed [31:0] r_X [0:3]; //X - state variables
+reg signed [31:0] r_P [0:3][0:3]; //P - Estimate Covariance Matrix 
+reg signed [31:0] r_Q [0:3][0:3]; // Q - Process Noise Matrix
+reg signed [31:0] r_C [0:3]; //C matrix
+reg signed [31:0] r_C_hold [0:3]; //C hold matrix (for multiplication)
+reg signed [31:0] y_update; //measurement residual
+reg signed [31:0] r_S; //innovation covariance
+reg signed [31:0] r_R; //observation noise covariance
+reg signed [31:0] r_K[0:3]; //kalman gain
 
 //this is 32' fixed point number 1.0 shifted up 16 bits for division numerator purposes (taking inverse of S)
 reg signed [47:0] r_one = 48'b00000000_00000001_00000000_00000000_00000000_00000000; 
@@ -88,16 +99,14 @@ reg signed [31:0] r_one_ID = 32'b00000000_00000001_00000000_00000000;
 
 integer i = 0;
 integer j = 0;
-//integer k = 0;
-//integer l = 0;
-//integer m = 0;
+
 reg r_init_system = 0; //initialzed to 0, gets set to and stays at 1 after all data/memory is initialized
 reg [5:0] r_SM = 0;
 
-wire signed [47:0] mult_out[0:3][0:3];
-reg signed  [47:0] mult_a[0:3][0:3];
-reg signed  [47:0] mult_b[0:3];
-wire signed [47:0] add_out[0:3];
+wire signed [63:0] mult_out[0:3][0:3];
+reg  signed [63:0] mult_a[0:3][0:3];
+reg  signed [63:0] mult_b[0:3];
+wire signed [50:0] add_out[0:3];
 
 //general purpose multiply accumulate blocks
 assign mult_out[0][0] = mult_a[0][0]*mult_b[0];
@@ -126,12 +135,12 @@ assign add_out[3] = (mult_out[3][0] >>16) + (mult_out[3][1] >>16) + (mult_out[3]
 reg [3:0] init_SM = 0;
 always@(posedge i_clk)
 begin
-if(~r_init_system) begin
+if(~r_init_system) begin //initialize my arrays with state space values and initial conditions
 case(init_SM)
 0: begin
-r_A [0][0] <= 32'b0000000000000000_1111000100111011; r_A [0][1] <= 32'b1000000000000000_0000111011000101; r_A [0][2] <= 32'b1000000000000000_0000011101100010; r_A [0][3] <= 0;
-r_A [1][0] <= 32'b0000000000000000_0000000011110110; r_A [1][1] <= 32'b0000000000000000_1111111100001010; r_A [1][2] <= 32'b1000000000000000_0000000001010010; r_A [1][3] <= 32'b1000000000000000_0000000001010010;
-r_A [2][0] <= 32'b0000000000000000_0000000011110110; r_A [2][1] <= 32'b1000000000000000_0000000001010010; r_A [2][2] <= 32'b0000000000000000_1111111100001010; r_A [2][3] <= 32'b1000000000000000_0000000001010010;
+r_A [0][0] <= 32'b0000000000000000_1111000100111011; r_A [0][1] <= 32'b1111111111111111_1111000100111011; r_A [0][2] <= 32'b1111111111111111_1111100010011110; r_A [0][3] <= 0;
+r_A [1][0] <= 32'b0000000000000000_0000000011110110; r_A [1][1] <= 32'b0000000000000000_1111111100001010; r_A [1][2] <= 32'b1111111111111111_1111111110101110; r_A [1][3] <= 32'b1111111111111111_1111111110101110;
+r_A [2][0] <= 32'b0000000000000000_0000000011110110; r_A [2][1] <= 32'b1111111111111111_1111111110101110; r_A [2][2] <= 32'b0000000000000000_1111111100001010; r_A [2][3] <= 32'b1111111111111111_1111111110101110;
 r_A [3][0] <= 0; 									 r_A [3][1] <= 0;									  r_A [3][2] <= 32'b0000000000000000_0000011101100010; r_A [3][3] <= 32'b0000000000000000_1111111111011010;
 
 r_B [0] <= 32'b0000000000000000_0000111011000101;    r_B [1] <= 0;     r_B [2] <= 0;   r_B [3] <= 0;
@@ -156,7 +165,7 @@ r_X[0] <= 32'b0000000000000000_0001100110011010; r_X[1] <= 32'b0000000000000000_
 
 init_SM <= 1;
 end
-1: begin
+1: begin //update A_Transpose from A matrix
 for (i = 0; i < 4; i = i + 1)begin
 for (j = 0; j <4; j = j + 1)begin
 r_AT[i][j] <= r_A[j][i];	
@@ -166,7 +175,7 @@ r_init_system <= 1;
 end
 endcase 
 end
-else begin
+else begin //begining of kalman filter SM
 case(r_SM)
 0: begin
 o_DV <= 0;
@@ -174,7 +183,6 @@ if(i_begin) r_SM <= 1;
 else r_SM <= r_SM;
 end
 1:begin //State estimation/prediction -- X = AX + BU (this is the AX part)
-
 for(i = 0; i < 4; i = i + 1) begin
 for(j = 0; j < 4; j = j + 1) begin
 mult_a[i][j] <= r_A[i][j];
@@ -196,7 +204,7 @@ r_SM <= 3;
 end
 3:begin//State estimation/prediction -- X = AX + BU (this is the AX + BU part)
 for(i = 0; i < 4; i = i + 1)begin
-r_X[i] <= r_X[i] + mult_out[0][i];
+r_X[i] <= r_X[i] + (mult_out[0][i] >> 16) ;
 end
 r_SM <= 4;
 end
@@ -298,9 +306,8 @@ end
 r_S <= add_out[0] + r_R;
 r_SM <= 18;
 end
-18:begin //take inverse of S by taking 1/S (numerator is already shifted up 16 bits)
-	//K = P*CT*Sinv (this is P*CT)
-r_S <= r_one / r_S; 	//This single division causes Fmax to drop from ~47MHZ to ~7.5 MHz, with +1K LE, look into replacing with something else
+18:begin //take inverse of S by taking 1/S (numerator is already shifted up 16 bits) //K = P*CT*Sinv (this is P*CT)
+r_S <= r_one / r_S; 	//This single division causes Fmax to drop from ~47MHZ to ~7.5 MHz, with +1K LE; look into replacing with something else
 for(i= 0; i < 4; i = i + 1)begin
 for(j = 0; j < 4; j = j +1)begin
 mult_a[i][j] <= r_P[i][j];
@@ -318,7 +325,7 @@ r_SM <= 20;
 end
 20: begin // ...
 for(i = 0; i < 4; i = i +1)
-r_K[i] <= mult_out[0][i];
+r_K[i] <= (mult_out[0][i] >> 16) ;
 r_SM <= 21;
 end
 21: begin //X = X + K*Y (this is K*Y)
@@ -330,7 +337,7 @@ r_SM <= 22;
 end
 22: begin //X = X + K*Y      -- P = (I - K*C)*P (this is K*C Part)
 for(i =0; i < 4; i = i+1)begin
-r_X[i] <= r_X[i] + mult_out[0][i];
+r_X[i] <= r_X[i] + (mult_out[0][i] >> 16) ;
 
 mult_a[0][i] <= r_K[0];
 mult_a[1][i] <= r_K[1];
