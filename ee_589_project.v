@@ -1,32 +1,25 @@
-//EE 589 hardware in the loop model predictive control system for DC-DC converter
-//assumes signed 32 bit input with 16 fractional 
+//hardware in the loop model predictive control system for DC-DC converter
+//assumes signed, two's complement, 32 bit input with 16 fractional 
 //assumes I have an analog stream of data (for FPGA-in-loop purposes) that I am sampling every 15e-6 seconds
-
-//LEFT OFF: the mult and division need fixed https://projectf.io/posts/division-in-verilog/
-// add if (iref < 0) iref == .001
 
 module ee_589_project(
 input i_clk,
 input i_reset_n,
 
-input [31:0] i_Vpv,
-input [31:0] i_Ipv,
-input [31:0] i_Vout,
+input signed [31:0] i_Vpv,
+input signed [31:0] i_Vout,
 
-output o_MPC_switch,
+output reg signed [31:0] o_MPC_DC,
 output [31:0] debug,
 output [31:0] debug1
 	);
-
-
 
 parameter word_size = 32;
 parameter tsample = 0.000015; //66.67kHz sampling rate
 parameter tclk =0.000000040; //25mhz 
 reg [word_size-1:0] r_MPC_Vpv;
-reg [word_size-1:0] r_MPC_Ipv;
 reg [word_size-1:0] r_MPC_Vout;
-reg  r_MPC_calc_DV;
+reg r_MPC_calc_DV;
 reg [9:0] r_sample_cnt;
 
 wire signed [31:0] state0;
@@ -37,7 +30,6 @@ wire signed [31:0] IPV;
 wire signed [31:0] IPV_plus;
 wire signed [31:0] IPV_minus;
 wire  KF_DV;
-
 
 always@(posedge i_clk) //sample input data once every 15e-6 seconds and run it through the algorithm
 begin
@@ -56,7 +48,6 @@ r_MPC_calc_DV <= 1;
 r_sample_cnt <= 10'd0;
 r_MPC_Vpv <= i_Vpv;
 r_MPC_Vout <= i_Vout;
-r_MPC_Ipv <= i_Ipv;
 	end
 else begin 
 r_sample_cnt <= r_sample_cnt + 1; 
@@ -68,32 +59,26 @@ end
 end
 end
 
-
-reg [7:0] algo_SM = 0;
-always@(posedge i_clk)
-begin
- //write code that passes data from KF to MPC when DV is received from KF
-case(algo_SM)
-0: begin
-if(KF_DV) begin
-	//
-end
-end
-
-
 endcase 
 end
 
+wire w_MPC_DV;
+wire signed [31:0] w_MPC_DC_update;
+always@(posedge i_clk) //update the output duty cycle only when there is DV from MPC module
+begin
+if (w_MPC_DV)
+o_MPC_DC <= w_MPC_DC_update;
+else o_MPC_DC <= o_MPC_DC;
 
-//instantiate MPC module:
+end
 
 //instantiate Kalman filter module:
 kalman_filter kf0(
 .i_clk (i_clk),
-.i_rst_n (i_rest_n),
-.i_u (i_Vpv),
-.i_y (i_y),
-.i_DC (i_Vout), 
+.i_rst_n (i_reset_n),
+.i_u (r_MPC_Vpv),
+.i_y (r_MPC_Vout),
+.i_DC (o_MPC_DC), 
 .o_state0 (state0),
 .o_state1 (state1),
 .o_state2 (state2),
@@ -103,6 +88,22 @@ kalman_filter kf0(
 .o_IPV_minus (IPV_minus),
 .o_DV (KF_DV)
 	);
+
+//instantiate MPC module:
+MPC_INC_COND mpc0(
+.i_clk (i_clk),
+.i_rst_n (i_rst_n),
+.i_Vpv (r_MPC_Vpv),
+.i_Ipv (IPV),
+.i_Vout (state3),
+.i_Ipv_plus (IPV_plus),
+.i_Ipv_minus (IPV_minus),
+.i_calc_DV (KF_DV),
+.o_DC_control (w_MPC_DC_update),
+.o_DV (w_MPC_DV)
+	);
+
+
 
 
 endmodule

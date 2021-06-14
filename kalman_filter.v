@@ -8,8 +8,8 @@
 module kalman_filter_TB();
 reg i_clk;
 reg i_rst_n;
-reg signed [31:0] i_u;
-reg signed [31:0] i_y;
+reg signed [31:0] i_u; //Vpv
+reg signed [31:0] i_y; //Vout
 reg i_begin;
 
 wire signed [31:0] o_state0;
@@ -82,8 +82,7 @@ output reg signed [31:0] o_state2, //IL2
 output reg signed [31:0] o_state3, //VCout
 output reg signed [31:0] o_IPV,
 output reg signed [31:0] o_IPV_plus,
-output reg signed [31:0] o_IPV_minus
-
+output reg signed [31:0] o_IPV_minus,
 output reg o_DV
 	);
 
@@ -543,8 +542,6 @@ end
 endcase
 end
 end
-
-
 
 endmodule
 
