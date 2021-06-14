@@ -1,5 +1,9 @@
 //notes: 32' * 32' = 64'; Q16 causes 64' >> 16 = 48'; 48' + 48' = 49'; 49' + 48' = 50'; 50' + 48' = 51'?
 //need to go through testbench and make sure all results are properly displaying to make sure the error in the result is a resolution problem and not a truncate or math problem
+//try to fix the division operator if time is permitting
+//redo the top module for feeding data into Kalaman Filter
+//added in the prediction part of the KF -- need to test it
+//redo the MPC module, test, integrate
 `timescale 1ns/1ns
 module kalman_filter_TB();
 reg i_clk;
@@ -62,19 +66,24 @@ end
 endmodule
 
 //kalman filter for estimating states/filtering noise of Boost Converter to be fed into MPC-MPPT algorithm
-//assumes 32 bit fixed point with 16 bit fractional
+//assumes 32 bit signed 2's compliment fixed point with 16 bit fractional, msb signed
 module kalman_filter(
 input i_clk,
 input i_rst_n,
 
 input signed [31:0] i_u,
 input signed [31:0] i_y,
+input signed [31:0] i_DC,
 input i_begin, //goes HI based on sampling rate
 
 output reg signed [31:0] o_state0, //VCpv
 output reg signed [31:0] o_state1, //IL1
 output reg signed [31:0] o_state2, //IL2
 output reg signed [31:0] o_state3, //VCout
+output reg signed [31:0] o_IPV,
+output reg signed [31:0] o_IPV_plus,
+output reg signed [31:0] o_IPV_minus
+
 output reg o_DV
 	);
 
@@ -90,6 +99,7 @@ reg signed [31:0] y_update; //measurement residual
 reg signed [31:0] r_S; //innovation covariance
 reg signed [31:0] r_R; //observation noise covariance
 reg signed [31:0] r_K[0:3]; //kalman gain
+reg signed [31:0] r_X_DC_pred[0:3]; //xhat values for future predictions
 
 //this is 32' fixed point number 1.0 shifted up 16 bits for division numerator purposes (taking inverse of S)
 reg signed [47:0] r_one = 48'b00000000_00000001_00000000_00000000_00000000_00000000; 
@@ -97,11 +107,20 @@ reg signed [47:0] r_one = 48'b00000000_00000001_00000000_00000000_00000000_00000
 //this is 32' fixed point number 1.0 used for identity matrix subtraction (no shifting here)
 reg signed [31:0] r_one_ID = 32'b00000000_00000001_00000000_00000000;
 
+//this is 32' fixed point number .0001 used for incrementing up or down the duty cycle for predictions
+reg signed [31:0] r_delta_DC = 32'b00000000_00000000_00000000_00000111;
+
+//this is 32' fixed point number -1.0 for multiplying numbers by -1
+reg signed[31:0] r_neg_one = 32'b11111111_11111111_00000000_00000000;
+
+reg signed [31:0] r_DC_plus;
+reg signed [31:0] r_DC_minus;
+reg signed [31:0] r_DC_use;  //this gets assigned DC, DC_plus, or DC_minus for A matrix computation
 integer i = 0;
 integer j = 0;
-
+reg [7:0] r_SM_hold; //used for the A matrix updater to know what state to go back to
 reg r_init_system = 0; //initialzed to 0, gets set to and stays at 1 after all data/memory is initialized
-reg [5:0] r_SM = 0;
+reg [7:0] r_SM = 0;
 
 wire signed [63:0] mult_out[0:3][0:3];
 reg  signed [63:0] mult_a[0:3][0:3];
@@ -109,7 +128,7 @@ reg  signed [63:0] mult_b[0:3];
 wire signed [50:0] add_out[0:3];
 
 //general purpose multiply accumulate blocks
-assign mult_out[0][0] = mult_a[0][0]*mult_b[0];
+assign mult_out[0][0] = mult_a[0][0]*mult_b[0]; 
 assign mult_out[0][1] = mult_a[0][1]*mult_b[1];
 assign mult_out[0][2] = mult_a[0][2]*mult_b[2];
 assign mult_out[0][3] = mult_a[0][3]*mult_b[3];
@@ -135,7 +154,7 @@ assign add_out[3] = (mult_out[3][0] >>16) + (mult_out[3][1] >>16) + (mult_out[3]
 reg [3:0] init_SM = 0;
 always@(posedge i_clk)
 begin
-if(~r_init_system) begin //initialize my arrays with state space values and initial conditions
+if(~r_init_system) begin //initialize my arrays with state space values and initial conditions (A Matrix Assumes DC of .5)
 case(init_SM)
 0: begin
 r_A [0][0] <= 32'b0000000000000000_1111000100111011; r_A [0][1] <= 32'b1111111111111111_1111000100111011; r_A [0][2] <= 32'b1111111111111111_1111100010011110; r_A [0][3] <= 0;
@@ -179,7 +198,7 @@ else begin //begining of kalman filter SM
 case(r_SM)
 0: begin
 o_DV <= 0;
-if(i_begin) r_SM <= 1;
+if(i_begin)begin r_SM <= 100; r_DC_use <= i_DC; r_SM_hold <= 1; end
 else r_SM <= r_SM;
 end
 1:begin //State estimation/prediction -- X = AX + BU (this is the AX part)
@@ -385,14 +404,141 @@ r_P[i][3] <= add_out[0];
 end
 r_SM <= 28;
 end
-28: //this ends the kalman filter SM
+28: //route new state estimations to ouput, start prediction process 
 begin
 o_state0 <= r_X[0];
 o_state1 <= r_X[1];
 o_state2 <= r_X[2];
 o_state3 <= r_X[3];
-o_DV <= 1;
+o_IPV <= i_u - r_X[0];
+r_DC_plus  <= r_DC_use + r_delta_DC;
+r_DC_minus <= r_DC_use - r_delta_DC;
+r_SM <= 29;
+end
+29: begin //update necessary A matrix values with the r_DC_plus values
+r_DC_use <= r_DC_plus;
+r_SM <= 100;
+r_SM_hold <= 30;
+end
+30: begin //estimate xhat again:
+for(i = 0; i < 4; i = i + 1) begin
+for(j = 0; j < 4; j = j + 1) begin
+mult_a[i][j] <= r_A[i][j];
+mult_b[i] <= r_X[i];
+end
+end
+r_SM <= 31;
+end
+31: begin //State estimation/prediction -- X = AX + BU (this is the AX and BU part)
+for (i=0; i < 4; i = i + 1) begin
+r_X_DC_pred[i] <= add_out[i];
+end
+for(i = 0; i < 4; i = i + 1) begin
+mult_a[0][i] <= r_B[i];
+mult_b[i] <= i_u;
+end
+r_SM <= 32;
+end
+32:begin//State estimation/prediction -- X = AX + BU (this is the AX + BU part)
+for(i = 0; i < 4; i = i + 1)begin
+r_X_DC_pred[i] <= r_X_DC_pred[i] + (mult_out[0][i] >> 16) ;
+end
+r_SM <= 33;
+end
+33:begin //find IPV+ and start process again for IPV-
+o_IPV_plus <= i_u - r_X_DC_pred[0]; 
+r_DC_use <= r_DC_minus;
+r_SM <= 100;
+r_SM_hold <= 34;
+end
+34: begin //estimate xhat again:
+for(i = 0; i < 4; i = i + 1) begin
+for(j = 0; j < 4; j = j + 1) begin
+mult_a[i][j] <= r_A[i][j];
+mult_b[i] <= r_X[i];
+end
+end
+r_SM <= 35;
+end
+35: begin //State estimation/prediction -- X = AX + BU (this is the AX and BU part)
+for (i=0; i < 4; i = i + 1) begin
+r_X_DC_pred[i] <= add_out[i];
+end
+for(i = 0; i < 4; i = i + 1) begin
+mult_a[0][i] <= r_B[i];
+mult_b[i] <= i_u;
+end
+r_SM <= 36;
+end
+36:begin//State estimation/prediction -- X = AX + BU (this is the AX + BU part)
+for(i = 0; i < 4; i = i + 1)begin
+r_X_DC_pred[i] <= r_X_DC_pred[i] + (mult_out[0][i] >> 16) ;
+end
+r_SM <= 37;
+37:begin //find IPV- and end the SM
+o_IPV_minus <= i_u - r_X_DC_pred[0]; 
 r_SM <= 0;
+o_DV <= 1;
+end
+
+//this is for updating the A Matrix with the existing value of the Duty Cycle DC (A(0,2), A(1,0), A(1,1), A(1,2), A(1,3), A(2,0), A(2,1), A(2,2), A(2,3), A(3, 2) (used at begining of SM and when making future predictions)
+100:begin //make sure DC is between 0 and 1
+if(r_DC_use < 0) r_DC_use <= 0;
+else if(r_DC_use > 32'b00000000_00000001_00000000_00000000) r_DC_use <= 32'b00000000_00000001_00000000_00000000;
+else r_DC_use <= r_DC_use;
+r_SM <= 101;
+end
+101:begin
+mult_a[0][0] <= 32'b11110000_11111001_11011000_10011110; mult_b[0] <= r_DC_use;//A(0,2) (DC*-1/CPV) 
+mult_a[0][1] <= 32'b00000000_10100110_10101010_10101011; mult_b[1] <= r_DC_use;//A(1,0) DC*L2/(L1*(L1+L2))) NEEDS TO BE ADDED TO 1/(L1+L2) THEN
+mult_a[0][2] <= 32'b11111111_01011001_01010101_01010101; mult_b[2] <= r_DC_use;//A(1,1) DC*-RL1*L2/(L1*(L1+L2)) NEEDS TO BE ADDED TO -RL1/(L1+L2)
+mult_a[0][3] <= 32'b00000000_10100110_10101010_10101011; mult_b[3] <= r_DC_use;//A(1,2) RL2*DC/(L1+L2) NEEDS TO BE ADDED TO -RL2/(L1+L2) THEN
+mult_a[1][0] <= 32'b00000000_10100110_10101010_10101011; 					   //A(1,3) DC/(L1+L2) NEEDS ADDED TO -1/(L1+L2)
+mult_a[1][1] <= 32'b00000000_10100110_10101010_10101011; 					   //A(2,0) L1*DC/(L2*(L1+L2) NEEDS ADDED TO 1/(L1+L2)
+mult_a[1][2] <= 32'b00000000_10100110_10101010_10101011;                       //A(2,1) RL1*DC/(L1+L2) NEEDS ADDED TO -RL1/(L1+L2)
+mult_a[1][3] <= 32'b11111111_01011001_01010101_01010101;                       //A(2,2) -RL2*L1*DC/(L2*(L1+L2) NEEDS ADDED TO -RL2/(L1+L2)
+mult_a[2][0] <= 32'b00000000_10100110_10101010_10101011;                       //A(2,3) DC/(L1+L2) NEEDS ADDED TO -1/(L1+L2)
+mult_a[2][1] <= 32'b11110000_11111001_11011000_10011110;                       //A(3,2) -DC/(Cout) NEEDS ADDED TO 1/(Cout)
+r_SM <= 102;
+end
+102:begin //get results, add to other values, apply to proper A matrix position
+r_A[0][2] <= (mult_out[0][0] >> 16);
+r_A[1][0] <= (mult_out[0][1] >> 16) + 32'b00000000_10100110_10101010_10101011;
+r_A[1][1] <= (mult_out[0][2] >> 16) + 32'b11111111_01011001_01010101_01010101;
+r_A[1][2] <= (mult_out[0][3] >> 16) + 32'b11111111_01011001_01010101_01010101;
+r_A[1][3] <= (mult_out[1][0] >> 16) + 32'b11111111_01011001_01010101_01010101;
+r_A[2][0] <= (mult_out[1][1] >> 16) + 32'b00000000_10100110_10101010_10101011;
+r_A[2][1] <= (mult_out[1][2] >> 16) + 32'b11111111_01011001_01010101_01010101;
+r_A[2][2] <= (mult_out[1][3] >> 16) + 32'b11111111_01011001_01010101_01010101;
+r_A[2][3] <= (mult_out[2][0] >> 16) + 32'b11111111_01011001_01010101_01010101;
+r_A[3][2] <= (mult_out[2][1] >> 16) + 32'b00001111_00000110_00100111_01100010;
+r_SM <= 103;
+end
+103: begin //discretize the updated values (add I + r_A*TS)
+mult_a[0][0] <= r_A[0][2]; mult_b[0] <= 32'b00000000_00000000_00000000_00000001;
+mult_a[0][1] <= r_A[1][0]; mult_b[1] <= 32'b00000000_00000000_00000000_00000001;
+mult_a[0][2] <= r_A[1][1]; mult_b[2] <= 32'b00000000_00000000_00000000_00000001;
+mult_a[0][3] <= r_A[1][2]; mult_b[3] <= 32'b00000000_00000000_00000000_00000001;
+mult_a[1][0] <= r_A[1][3];
+mult_a[1][1] <= r_A[2][0];
+mult_a[1][2] <= r_A[2][1];
+mult_a[1][3] <= r_A[2][2];
+mult_a[2][0] <= r_A[2][3];
+mult_a[2][1] <= r_A[3][2];
+r_SM <= 104;
+end
+104:begin //add I and go back to the core SM
+r_A[0][2] <= (mult_out[0][0] >> 16) + r_one_ID;
+r_A[1][0] <= (mult_out[0][1] >> 16);
+r_A[1][1] <= (mult_out[0][2] >> 16) + r_one_ID;
+r_A[1][2] <= (mult_out[0][3] >> 16);
+r_A[1][3] <= (mult_out[1][0] >> 16);
+r_A[2][0] <= (mult_out[1][1] >> 16);
+r_A[2][1] <= (mult_out[1][2] >> 16);
+r_A[2][2] <= (mult_out[1][3] >> 16) + r_one_ID;
+r_A[2][3] <= (mult_out[2][0] >> 16);
+r_A[3][2] <= (mult_out[2][1] >> 16);
+r_SM <= r_SM_hold;
 end
 endcase
 end
@@ -401,3 +547,4 @@ end
 
 
 endmodule
+

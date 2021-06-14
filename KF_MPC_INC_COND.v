@@ -1,4 +1,4 @@
-module KF_MPC_INC_COND(
+module MPC_INC_COND(
 input i_clk,
 input i_rst_n,
 
