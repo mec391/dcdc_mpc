@@ -2,44 +2,57 @@
 //need to go through testbench and make sure all results are properly displaying to make sure the error in the result is a resolution problem and not a truncate or math problem
 //try to fix the division operator if time is permitting
 //redo the top module for feeding data into Kalaman Filter
-//added in the prediction part of the KF -- need to test it
-//redo the MPC module, test, integrate
+
+//state1 and state2 need commented out throughout the code to meet pinout for module simulation
+
 `timescale 1ns/1ns
 module kalman_filter_TB();
 reg i_clk;
 reg i_rst_n;
 reg signed [31:0] i_u; //Vpv
 reg signed [31:0] i_y; //Vout
+reg signed [31:0] i_DC;
 reg i_begin;
 
 wire signed [31:0] o_state0;
 wire signed [31:0] o_state1;
 wire signed [31:0] o_state2;
 wire signed [31:0] o_state3;
+wire signed [31:0] o_IPV;
+wire signed [31:0] o_IPV_minus;
+wire signed [31:0] o_IPV_plus;
 wire o_DV;
 
-wire [5:0] debug_SM = UUT.r_SM;
+wire [7:0] debug_SM = UUT.r_SM;
 wire signed [50:0] r_X0 = UUT.r_X[0];
 wire signed [50:0] r_X1 = UUT.r_X[1];
 wire signed [50:0] r_X2 = UUT.r_X[2];
 wire signed [50:0] r_X3 = UUT.r_X[3];
 
-wire signed [50:0] mult_out0 = UUT.mult_out[1][0];
-wire signed [50:0] mult_out1 = UUT.mult_out[1][1];
-wire signed [50:0] mult_out2 = UUT.mult_out[1][2];
-wire signed [50:0] mult_out3 = UUT.mult_out[1][3];
-
+wire signed [63:0] mult_out0 = UUT.mult_out[0][0];
+wire signed [63:0] mult_out1 = UUT.mult_out[0][1];
+wire signed [63:0] mult_out2 = UUT.mult_out[0][2];
+wire signed [63:0] mult_out3 = UUT.mult_out[0][3];
+wire signed [31:0] r_A00 = UUT.r_A[0][0];
+wire signed [31:0] r_A01 = UUT.r_A[0][1];
+wire signed [31:0] r_A02 = UUT.r_A[0][2];
+wire signed [31:0] r_A03 = UUT.r_A[0][3];
+wire signed [31:0] r_DC_use = UUT.r_DC_use;
 
 kalman_filter UUT(
 .i_clk (i_clk),
 .i_rst_n (i_rst_n),
 .i_u (i_u),
 .i_y (i_y),
+.i_DC(i_DC),
 .i_begin (i_begin),
 .o_state0 (o_state0),
 .o_state1 (o_state1),
 .o_state2 (o_state2),
 .o_state3 (o_state3),
+.o_IPV (o_IPV),
+.o_IPV_plus (o_IPV_plus),
+.o_IPV_minus (o_IPV_minus),
 .o_DV (o_DV)
 	);
 
@@ -47,12 +60,13 @@ initial begin
 i_clk = 1;
 i_u = 0;
 i_y = 0;
+i_rst_n = 1;
 
 
 #2
-i_u = 32'b0000000000100011_0000000000000000; //35.0V
-i_y = 32'b0000000001010000_0000000000000000; //80.0V
-
+i_u =  32'b0000000000100011_0000000000000000; //35.0V
+i_y =  32'b0000000001010000_0000000000000000; //80.0V
+i_DC = 32'b0000000000000000_1000000000000000; //.5 DC
 #4
 i_begin = 1;
 #2
@@ -122,8 +136,8 @@ reg r_init_system = 0; //initialzed to 0, gets set to and stays at 1 after all d
 reg [7:0] r_SM = 0;
 
 wire signed [63:0] mult_out[0:3][0:3];
-reg  signed [63:0] mult_a[0:3][0:3];
-reg  signed [63:0] mult_b[0:3];
+reg  signed [31:0] mult_a[0:3][0:3];
+reg  signed [31:0] mult_b[0:3];
 wire signed [50:0] add_out[0:3];
 
 //general purpose multiply accumulate blocks
@@ -474,6 +488,7 @@ for(i = 0; i < 4; i = i + 1)begin
 r_X_DC_pred[i] <= r_X_DC_pred[i] + (mult_out[0][i] >> 16) ;
 end
 r_SM <= 37;
+end
 37:begin //find IPV- and end the SM
 o_IPV_minus <= i_u - r_X_DC_pred[0]; 
 r_SM <= 0;
@@ -486,8 +501,8 @@ if(r_DC_use < 0) r_DC_use <= 0;
 else if(r_DC_use > 32'b00000000_00000001_00000000_00000000) r_DC_use <= 32'b00000000_00000001_00000000_00000000;
 else r_DC_use <= r_DC_use;
 r_SM <= 101;
-end
-101:begin
+end                 
+101:begin           
 mult_a[0][0] <= 32'b11110000_11111001_11011000_10011110; mult_b[0] <= r_DC_use;//A(0,2) (DC*-1/CPV) 
 mult_a[0][1] <= 32'b00000000_10100110_10101010_10101011; mult_b[1] <= r_DC_use;//A(1,0) DC*L2/(L1*(L1+L2))) NEEDS TO BE ADDED TO 1/(L1+L2) THEN
 mult_a[0][2] <= 32'b11111111_01011001_01010101_01010101; mult_b[2] <= r_DC_use;//A(1,1) DC*-RL1*L2/(L1*(L1+L2)) NEEDS TO BE ADDED TO -RL1/(L1+L2)
@@ -527,7 +542,7 @@ mult_a[2][1] <= r_A[3][2];
 r_SM <= 104;
 end
 104:begin //add I and go back to the core SM
-r_A[0][2] <= (mult_out[0][0] >> 16) + r_one_ID;
+r_A[0][2] <= (mult_out[0][0] >> 16);
 r_A[1][0] <= (mult_out[0][1] >> 16);
 r_A[1][1] <= (mult_out[0][2] >> 16) + r_one_ID;
 r_A[1][2] <= (mult_out[0][3] >> 16);
