@@ -71,6 +71,24 @@ i_DC = 32'b0000000000000000_1000000000000000; //.5 DC
 i_begin = 1;
 #2
 i_begin = 0;
+
+#200
+i_u =  32'b0000000000100100_0000000000000000; //36.0V
+i_y =  32'b0000000001010001_0000000000000000; //81.0V
+i_DC = 32'b0000000000000000_1000000000000000; //.5 DC
+#4
+i_begin = 1;
+#2
+i_begin = 0;
+
+#200
+i_u =  32'b0000000000100101_0000000000000000; //37.0V
+i_y =  32'b0000000001010010_0000000000000000; //82.0V
+i_DC = 32'b0000000000000000_1000000000000000; //.5 DC
+#4
+i_begin = 1;
+#2
+i_begin = 0;
 end
 
 always begin
@@ -121,7 +139,8 @@ reg signed [47:0] r_one = 48'b00000000_00000001_00000000_00000000_00000000_00000
 reg signed [31:0] r_one_ID = 32'b00000000_00000001_00000000_00000000;
 
 //this is 32' fixed point number .0001 used for incrementing up or down the duty cycle for predictions
-reg signed [31:0] r_delta_DC = 32'b00000000_00000000_00000000_00000111;
+//CHANGED TO .001 FOR DEBUG PURPOSES
+reg signed [31:0] r_delta_DC = 32'b00000000_00000000_00000000_01000010;//32'b00000000_00000000_00000000_00000111;
 
 //this is 32' fixed point number -1.0 for multiplying numbers by -1
 reg signed[31:0] r_neg_one = 32'b11111111_11111111_00000000_00000000;

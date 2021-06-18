@@ -17,7 +17,7 @@ wire signed [31:0] r_G1 = UUT.r_G1;
 wire signed [31:0] r_Iref = UUT.r_Iref;
 wire signed [31:0] r_equation_result = UUT.r_equation_result;
 wire signed [31:0] r_cond = UUT.r_cond;
-wire signed [31:0] mult_out = UUT.mult_out;
+wire signed [63:0] mult_out = UUT.mult_out;
 wire  o_DV;
 
 MPC_INC_COND UUT(
@@ -39,8 +39,11 @@ i_rst_n = 0;
 i_Vpv =       32'b00000000_00100011_00000000_00000000;//35
 i_Ipv =       32'b11111111_11100100_00110010_11111111;//-27.8008
 i_Vout =      32'b00000000_01010000_00000000_00000000;//80
-i_Ipv_plus =  32'b11111111_11101011_11101111_01000010;//-20.0654
-i_Ipv_minus = 32'b11111111_11101011_11101111_00001110;//-20.0662
+//i_Ipv_plus =  32'b11111111_11101011_11101111_01000010;//-20.0654
+//i_Ipv_minus = 32'b11111111_11101011_11101111_00001110;//-20.0662
+i_Ipv_plus =  32'b00000000_00000000_10000000_00000000;
+i_Ipv_minus = 32'b00000000_00000000_11000000_00000000;
+
 i_calc_DV = 0;
 #2
 i_rst_n = 1;
@@ -70,7 +73,8 @@ input signed [31:0] i_Ipv_minus,
 input i_calc_DV,
 
 output reg signed [31:0] o_DC_control,
-output reg o_DV
+output reg o_DV,
+output signed [31:0] o_IREF
 );
 
 reg signed [31:0] r_Vpv;
@@ -96,12 +100,15 @@ reg signed [63:0] mult_out;
 reg r_G0_flag;
 reg r_G1_flag;
 integer i = 0;
+
+assign o_IREF = r_Iref;
+
 always@(posedge i_clk)
 begin
 if(~i_rst_n)
 begin
 r_Iref <= 0;
-o_DC_control <= 32'b00000000_00000000_10000000_00000000;//need to set this to .5 to match the value of the matlab simulation
+o_DC_control <= 32'b00000000_00000001_00000000_00000000;//init to 1
 r_Vpv_t_1 <= 0;//" "
 r_Ipv_t_1  <= 0;// " "
 r_Iref_t_1 <= 0;
@@ -135,7 +142,8 @@ r_numerator[31:0] <= r_delta_I;
 r_SM <= 3;
 end
 3: begin
-r_cond <= (r_numerator << 16) / r_delta_V;	
+if(r_delta_V == 0) r_cond <= 0;
+else r_cond <= (r_numerator << 16) / r_delta_V;	
 r_SM <= 4;
 end
 4: begin
@@ -147,12 +155,12 @@ r_equation_result <= (mult_out >> 16) + r_Ipv;
 r_SM <= 6;
 end
 6: begin //begin logical statement to find new value of Iref
-if      (r_delta_V == 0 && r_delta_I == 0) r_Iref <= r_Iref;
-else if (r_delta_V == 0 && r_delta_I > 0)  r_Iref <= r_Iref - r_Z;
-else if (r_delta_V == 0 && r_delta_I < 0)  r_Iref <= r_Iref + r_Z;
-else if (r_delta_V != 0 && r_equation_result == 0) r_Iref <= r_Iref;
-else if (r_delta_V != 0 && r_equation_result >  0) r_Iref <= r_Iref - r_Z;
-else if (r_delta_V != 0 && r_equation_result <  0) r_Iref <= r_Iref + r_Z;
+if      ((r_delta_V == 0) && (r_delta_I == 0)) r_Iref <= r_Iref;
+else if ((r_delta_V == 0) && (r_delta_I > 0))  r_Iref <= r_Iref - r_Z;
+else if ((r_delta_V == 0) && (r_delta_I < 0))  r_Iref <= r_Iref + r_Z;
+else if ((r_delta_V != 0) && (r_equation_result == 0)) r_Iref <= r_Iref;
+else if ((r_delta_V != 0) && (r_equation_result >  0)) r_Iref <= r_Iref - r_Z;
+else if ((r_delta_V != 0) && (r_equation_result <  0)) r_Iref <= r_Iref + r_Z;
 r_SM <= 7;
 end
 7: begin //take difference between Iref and Ipreds
@@ -194,6 +202,8 @@ if (o_DC_control < 0)
 o_DC_control <= 0;
 o_DV <= 1;
 r_SM <= 0;
+if(r_Iref < 0) r_Iref <= 0;
+else r_Iref <= r_Iref;
 end
 endcase
 end

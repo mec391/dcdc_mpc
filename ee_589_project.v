@@ -51,8 +51,10 @@ input signed [31:0] i_Vpv,
 input signed [31:0] i_Vout,
 
 output reg signed [31:0] o_MPC_DC,
-output [31:0] debug,
-output [31:0] debug1
+output signed [31:0] debug,
+output signed [31:0] debug1,
+output signed [31:0] debug2,
+output signed [31:0] debug3
 	);
 
 parameter word_size = 32;
@@ -70,7 +72,13 @@ wire signed [31:0] state3;
 wire signed [31:0] IPV;
 wire signed [31:0] IPV_plus;
 wire signed [31:0] IPV_minus;
+wire signed [31:0] IREF;
 wire  KF_DV;
+
+assign debug = IREF;
+assign debug1 = IPV_plus;
+assign debug2 = IPV_minus;
+assign debug3 = IPV;
 
 always@(posedge i_clk) //sample input data once every 15e-6 seconds and run it through the algorithm
 begin
@@ -103,7 +111,7 @@ wire w_MPC_DV;
 wire signed [31:0] w_MPC_DC_update;
 always@(posedge i_clk) //update the output duty cycle only when there is DV from MPC module
 begin
-if(~i_reset_n) o_MPC_DC <= 32'b00000000_00000000_10000000_00000000; //initialize duty cycle to .5
+if(~i_reset_n) o_MPC_DC <= 32'b00000000_00000001_00000000_00000000; //initialize duty cycle to 1
 else begin
 if (w_MPC_DV)
 o_MPC_DC <= w_MPC_DC_update;
@@ -140,7 +148,8 @@ MPC_INC_COND mpc0(
 .i_Ipv_minus (IPV_minus),
 .i_calc_DV (KF_DV),
 .o_DC_control (w_MPC_DC_update),
-.o_DV (w_MPC_DV)
+.o_DV (w_MPC_DV),
+.o_IREF (IREF)
 	);
 
 endmodule
